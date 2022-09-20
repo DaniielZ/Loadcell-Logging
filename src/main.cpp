@@ -42,3 +42,42 @@ void setup()
     Serial.println("initialization done.");
     file.println("Iteration, Time ms, Force N");
     file.close();
+    
+    float result = 0;
+    unsigned long time = 0;
+    int i = 0;
+
+    while (true)
+    {
+        if (i % save_file_every == 0)
+        {
+            file = SD.open(String(path) + String(path_number) + String(".txt"), FILE_WRITE);
+            Serial.println("Open");
+        }
+        result = scale.get_units();
+        time = millis();
+        Serial.print(i);
+        Serial.print(", ");
+        Serial.print(result, 3);
+        Serial.print(", ");
+        Serial.print(time);
+        Serial.println();
+
+        file.print(i);
+        file.print(", ");
+        file.print(result, 3);
+        file.print(", ");
+        file.print(time);
+        file.println();
+        i++;
+        if (i % save_file_every == 0)
+        {
+            Serial.println("Save");
+            file.close();
+        }
+    }
+}
+
+void loop()
+{
+}

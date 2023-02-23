@@ -30,6 +30,7 @@ int save_file_every = 200;     // samples
 int output_serial_every = 50;  // outputs every sixteenth value (10 values per second)
 float all_time_max_force = -1; // visu laiku lielākais spēks
 float last_speed = 0;          // pēdejais gp ātrums
+int last_satelites = 0;
 
 unsigned long time_reset = 0; // priekš laika reset funkcijas
 int measurement = 0;
@@ -39,21 +40,22 @@ struct DATA
     unsigned long time = 0;
     float force = 0;
     float speed = 0;
+    int satelites = 0;
 };
-
+struct DATA_POINT
+{
+    float min = 0;
+    float max = 0;
+    float average = 0;
+    float sum = 0; // for average calculations
+};
 struct DATA_CYCLE
 {
-    float max_force = 0;
-    float min_force = 0;
-    float all_time_max_fore = 0;
-    float average_force = 0;
-    unsigned long last_time = 0;
-    float speed_sum = 0;
-    float average_speed = 0;
-    float min_speed = 0;
-    float max_speed = 0;
-    float force_sum = 0;
     int measurements = 0;
+    unsigned long last_time = 0;
+    DATA_POINT force;
+    DATA_POINT speed;
+    DATA_POINT satelities;
 };
 void CreateNewFile()
 {
@@ -64,7 +66,7 @@ void CreateNewFile()
     file = SD.open(String(path) + String(path_number) + String(".txt"), FILE_WRITE);
     Serial.println(String(path) + String(path_number) + String(".txt"));
     Serial.println("initialization done.");
-    file.println("Iteration, Force N, Time ms");
+    file.println("Iteration, Force N, Time ms, Speed m/s, Satelites");
     file.close();
     time_reset = millis();
 }
@@ -90,43 +92,35 @@ void CheckSerialInput()
         }
     }
 }
-float getGPSSpeed()
+void GetGPSData(DATA &data)
 {
-    float speed = 0;
     while (ss.available() > 0)
     {
         gps.encode(ss.read());
         if (gps.location.isUpdated())
         {
-            // Number of satellites in use (u32)
-            Serial.print("Number os satellites in use = ");
-            Serial.println(gps.satellites.value());
-            // Latitude in degrees (double)
-            Serial.print("Latitude= ");
-            Serial.print(gps.location.lat(), 6);
-            // Longitude in degrees (double)
-            Serial.print(" Longitude= ");
-            Serial.println(gps.location.lng(), 6);
-            Serial.print("Speed in m/s = ");
-            Serial.println(gps.speed.mps());
-
-            speed = gps.speed.mps();
+            data.satelites = gps.satellites.value();
+            data.speed = gps.speed.mps();
         }
-        if (speed == 0)
+        if (data.speed == 0)
         {
-            speed = last_speed;
+            data.speed = last_speed;
         }
-        last_speed = speed;
+        last_speed = data.speed;
+        if (data.satelites == 0)
+        {
+            data.satelites = last_satelites;
+        }
+        last_satelites = data.satelites;
     }
-    return speed;
 }
 DATA LogData(File file)
 {
     DATA data;
     data.force = scale.get_units();
     data.time = millis() - time_reset;
+    GetGPSData(data);
     measurement++;
-    data.speed = getGPSSpeed();
 
     file.print(measurement);
     file.print(", ");
@@ -135,84 +129,89 @@ DATA LogData(File file)
     file.print(data.time);
     file.print(", ");
     file.print(data.speed, 3);
+    file.print(", ");
+    file.print(data.satelites);
     file.println();
     return data;
 }
 
+void GetMinMaxAverage(DATA_POINT &data_point, float value, int measurements)
+{
+    // average
+    data_point.sum += value;
+    data_point.average = data_point.sum / measurements;
+    // max
+    if (data_point.max < value)
+    {
+        data_point.max = value;
+    }
+    // min
+    if (data_point.min > value)
+    {
+        data_point.min = value;
+    }
+}
+
 void ProcessData(DATA_CYCLE &data_cycle, DATA data)
 {
-    // check for max
-    if (data_cycle.max_force < data.force)
-    {
-        data_cycle.max_force = data.force;
-    }
+    data_cycle.measurements++;
+    data_cycle.last_time = data.time;
+
+    GetMinMaxAverage(data_cycle.force, data.force, data_cycle.measurements);
+    GetMinMaxAverage(data_cycle.speed, data.speed, data_cycle.measurements);
+    GetMinMaxAverage(data_cycle.satelities, data.satelites, data_cycle.measurements);
+
     // check for all time max
     if (all_time_max_force < data.force)
     {
         all_time_max_force = data.force;
     }
-
-    // check for min
-    if (data_cycle.min_force > data.force)
-    {
-        data_cycle.min_force = data.force;
-    }
-    // average
-    data_cycle.measurements++;
-    data_cycle.force_sum += data.force;
-    data_cycle.average_force = data_cycle.force_sum / data_cycle.measurements;
-
-    // set time
-    data_cycle.last_time = data.time;
-
-    // check for max
-    if (data_cycle.max_speed < data.speed)
-    {
-        data_cycle.max_speed = data.speed;
-    }
-
-    // check for min
-    if (data_cycle.min_speed > data.speed)
-    {
-        data_cycle.min_speed = data.speed;
-    }
-    // average
-    data_cycle.speed_sum += data.speed;
-    data_cycle.average_speed = data_cycle.speed_sum / data_cycle.measurements;
 }
 
 void PrintData(DATA_CYCLE &data_cycle)
 {
     Serial.print("AvrgForce, N: ");
-    Serial.print(data_cycle.average_force, 2);
+    Serial.print(data_cycle.force.average, 2);
     Serial.print("    ");
     Serial.print("MinForce, N: ");
-    Serial.print(data_cycle.min_force, 2);
+    Serial.print(data_cycle.force.min, 2);
     Serial.print("    ");
     Serial.print("MaxForce, N: ");
-    Serial.print(data_cycle.max_force, 2);
+    Serial.print(data_cycle.force.max, 2);
     Serial.print("    ");
     Serial.print("AllTimeForce, N: ");
     Serial.print(all_time_max_force, 2);
     Serial.print("    ");
     Serial.print("AvrgSpeed, km/h: ");
-    Serial.print(data_cycle.average_speed * 3.6, 2);
+    Serial.print(data_cycle.speed.average * 3.6, 2);
     Serial.print("    ");
     Serial.print("MinSpeed, km/h: ");
-    Serial.print(data_cycle.min_speed * 3.6, 2);
+    Serial.print(data_cycle.speed.min * 3.6, 2);
     Serial.print("    ");
     Serial.print("MaxSpeed, km/h: ");
-    Serial.print(data_cycle.max_speed * 3.6, 2);
+    Serial.print(data_cycle.speed.max * 3.6, 2);
     Serial.print("    ");
     Serial.print("Time, ms: ");
     Serial.print(data_cycle.last_time);
+    Serial.print("    ");
+    Serial.print("AvrgSatelites: ");
+    Serial.print(data_cycle.satelities.average, 2);
+    Serial.print("    ");
+    Serial.print("MinSatelites: ");
+    Serial.print(data_cycle.satelities.min, 2);
+    Serial.print("    ");
+    Serial.print("MaxSatelites: ");
+    Serial.print(data_cycle.satelities.max, 2);
     Serial.println();
 }
-
-void setup()
+void initialize()
 {
-    delay(5000);
     Serial.begin(57600);
+    while (!Serial)
+    {
+        // do nothing until Serial Monitor is opened
+    }
+
     Serial.println("Initializing the scale");
     pinMode(LOADCELL_DOUT_PIN, INPUT); // data line  //Yellow cable
     pinMode(LOADCELL_SCK_PIN, OUTPUT); // SCK line  //Orange cable
@@ -237,6 +236,10 @@ void setup()
     Serial.println("GPS initialized!");
 
     Serial.println("Press r to start recording.");
+}
+void setup()
+{
+    initialize();
     while (true)
     {
         CheckSerialInput();
